@@ -2,35 +2,59 @@ library(deloRean)
 library(opentimeseries)
 
 
-## Example Step 1, Init Archive, once generated make sure
-# the newly created archive is your working dir
-# outcommented because by the time you read this in boilerplate.R
-# you've already created the archive.
-# archive_init("ch.kof.globalbaro", parent_dir = )
+## Step 1: Init Archive
+# Already done — archive is initialised.
+# archive_init("us.fred.indpro", parent_dir = "~/KOF_Lab/opentsi/")
 
 
+## Step 2: Generate History
 
-## Example Step 2, Generate History
-
-library(kofdata)
+library(alfred)
 library(data.table)
 library(tsbox)
 
-global <- get_collection("globalbaro_vintages")
-names(global) <- gsub("globalbaro_","",names(global))
-names(global) <- sub("_", "\\.", names(global))
-class(global) <- c(class(global), "tslist")
-release_dates <- rep(seq(as.Date("2020-01-10"),
-                         by = "1 month",
-                         length.out = length(global)/2),2)
-vintages_dt <- create_vintage_dt(release_dates, global)
+# INDPRO: Industrial Production: Total Index
+# Monthly, Index 2017=100, Seasonally Adjusted
+# Full vintage history from ALFRED: https://alfred.stlouisfed.org/series?seid=INDPRO
+
+indpro <- get_alfred_series("INDPRO", "indpro")
+indpro_dt <- data.table::as.data.table(indpro)
+
+# Get unique vintage (realtime) dates, sorted chronologically
+vintage_dates <- sort(unique(indpro_dt$realtime_period))
+
+# Build a named list: one tsbox-compatible data.table per vintage
+tsl <- lapply(vintage_dates, function(vdate) {
+  indpro_dt[realtime_period == vdate, .(time = date, value = indpro)]
+})
+names(tsl) <- paste0("indpro.", format(vintage_dates, "%Y-%m"))
+
+
+## Step 3: Create vintages data.table
+vintages_dt <- create_vintage_dt(vintage_dates, tsl)
 head(vintages_dt)
 
-## Example Step 3, Import History to Archive
+
+## Step 4: Import History to Archive
 archive_import_history(vintages_dt, repository_path = ".")
 
 
+## Step 5: Write Metadata
+# Edit data-raw/metadata.yaml, then validate and render:
+deloRean::render_metadata()
+meta <- read_meta(".")
+deloRean::validate_metadata(meta)
+
+## Step 6: Automation
+# process_data() and generate_checksum_input() are implemented in R/
+# After editing those files:
+devtools::load_all()
+devtools::check()
+devtools::install()
 
 
-
-
+## Step 7: Seal Archive
+# Run after render_metadata() has produced inst/metadata.json
+# not in namespace
+checksum_input <- us.fred.indpro:::generate_checksum_input()
+archive_seal(checksum_input)
